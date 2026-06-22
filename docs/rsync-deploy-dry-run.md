@@ -5,11 +5,12 @@ Reusable GitHub Actions workflow for previewing what an rsync deploy would uploa
 The workflow is intentionally dry-run only:
 
 - uses `rsync -n`
+- uses `--checksum --no-times --omit-dir-times` so GitHub checkout timestamp churn does not appear as deploy drift
 - does not use `--delete`
 - does not upload files
 - does not delete files
 - does not deploy files
-- does not change permissions
+- does not change permissions or timestamps
 - uploads only sanitized summary artifacts
 
 ## Caller example
