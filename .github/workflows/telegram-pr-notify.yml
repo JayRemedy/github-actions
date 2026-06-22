@@ -1,0 +1,50 @@
+name: Reusable Telegram PR notify
+
+on:
+  workflow_call:
+    secrets:
+      telegram_bot_token:
+        required: true
+      telegram_chat_id:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Send Telegram PR alert
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Telegram PR alert
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.telegram_bot_token }}
+          TELEGRAM_CHAT_ID: ${{ secrets.telegram_chat_id }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
+            echo "Telegram secrets are not configured."
+            exit 1
+          fi
+
+          if [ -z "${PR_URL}" ]; then
+            echo "This workflow is intended for pull_request events."
+            exit 0
+          fi
+
+          message=$(printf 'New pull request in %s\n\nTitle: %s\nAuthor: %s\nURL: %s' \
+            "${REPO}" \
+            "${PR_TITLE}" \
+            "${PR_AUTHOR}" \
+            "${PR_URL}")
+
+          curl --fail-with-body -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${message}" \
+            --data-urlencode "disable_web_page_preview=true"
