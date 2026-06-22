@@ -65,7 +65,7 @@ secrets, hostnames, usernames, target directories, and exclude configuration.
 
 ## Artifacts
 
-The workflow uploads only these sanitized artifacts:
+The workflow writes the same sanitized Markdown report to the GitHub Actions run summary and uploads only these sanitized artifacts:
 
 - `deploy-drift-report.md`
 - `deploy-drift-summary.json`
