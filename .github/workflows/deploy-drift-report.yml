@@ -1,0 +1,211 @@
+name: Deploy drift report
+
+on:
+  workflow_call:
+    inputs:
+      fixture_mode:
+        description: Run against bundled fixture file lists instead of remote SSH.
+        required: false
+        type: boolean
+        default: true
+      source_path:
+        description: Path in the caller repository to compare against the remote target.
+        required: false
+        type: string
+        default: "."
+      remote_host:
+        description: Deployment host supplied by the caller repository.
+        required: false
+        type: string
+        default: ""
+      remote_user:
+        description: SSH username supplied by the caller repository.
+        required: false
+        type: string
+        default: ""
+      remote_target_dir:
+        description: Remote target directory supplied by the caller repository.
+        required: false
+        type: string
+        default: ""
+      ssh_port:
+        description: SSH port supplied by the caller repository.
+        required: false
+        type: string
+        default: "22"
+      exclude_file:
+        description: Optional caller repository file containing exclude patterns.
+        required: false
+        type: string
+        default: ""
+      exclude_patterns:
+        description: Optional newline-separated exclude patterns supplied by the caller.
+        required: false
+        type: string
+        default: ""
+      artifact_retention_days:
+        description: Number of days to retain sanitized report artifacts.
+        required: false
+        type: number
+        default: 14
+    secrets:
+      ssh_private_key:
+        description: Read-only SSH private key supplied by the caller repository.
+        required: false
+      known_hosts:
+        description: Known hosts content supplied by the caller repository.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: Generate deploy drift report
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@v4
+        with:
+          path: caller
+
+      - name: Resolve toolkit ref
+        id: toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow_ref="${GITHUB_WORKFLOW_REF}"
+          repository="${workflow_ref%%/.github/workflows/*}"
+          ref="${workflow_ref##*@}"
+          if [[ -z "${repository}" || -z "${ref}" || "${repository}" == "${workflow_ref}" ]]; then
+            echo "Could not resolve reusable workflow repository and ref." >&2
+            exit 1
+          fi
+          {
+            echo "repository=${repository}"
+            echo "ref=${ref}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Check out shared workflow toolkit
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.toolkit.outputs.repository }}
+          ref: ${{ steps.toolkit.outputs.ref }}
+          path: toolkit
+
+      - name: Prepare drift inputs
+        id: inputs
+        shell: bash
+        env:
+          FIXTURE_MODE: ${{ inputs.fixture_mode }}
+          EXCLUDE_FILE: ${{ inputs.exclude_file }}
+          EXCLUDE_PATTERNS: ${{ inputs.exclude_patterns }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/deploy-drift" "deploy-drift-artifacts"
+
+          extra_excludes="${RUNNER_TEMP}/deploy-drift/extra-excludes.txt"
+          printf '%s\n' "${EXCLUDE_PATTERNS}" > "${extra_excludes}"
+          echo "extra_excludes=${extra_excludes}" >> "${GITHUB_OUTPUT}"
+
+          if [[ -n "${EXCLUDE_FILE}" ]]; then
+            caller_excludes="caller/${EXCLUDE_FILE}"
+            if [[ ! -f "${caller_excludes}" ]]; then
+              echo "Configured exclude_file was not found in the caller repository." >&2
+              exit 1
+            fi
+            echo "caller_excludes=${caller_excludes}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "caller_excludes=" >> "${GITHUB_OUTPUT}"
+          fi
+
+          if [[ "${FIXTURE_MODE}" == "true" ]]; then
+            echo "local_list=toolkit/fixtures/deploy-drift/local-files.txt" >> "${GITHUB_OUTPUT}"
+            echo "remote_list=toolkit/fixtures/deploy-drift/remote-files.txt" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Collect remote file list
+        if: ${{ !inputs.fixture_mode }}
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.ssh_private_key }}
+          KNOWN_HOSTS: ${{ secrets.known_hosts }}
+          REMOTE_HOST: ${{ inputs.remote_host }}
+          REMOTE_USER: ${{ inputs.remote_user }}
+          REMOTE_TARGET_DIR: ${{ inputs.remote_target_dir }}
+          SSH_PORT: ${{ inputs.ssh_port }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${SSH_PRIVATE_KEY}" || -z "${KNOWN_HOSTS}" || -z "${REMOTE_HOST}" || -z "${REMOTE_USER}" || -z "${REMOTE_TARGET_DIR}" ]]; then
+            echo "Live mode requires ssh_private_key, known_hosts, remote_host, remote_user, and remote_target_dir." >&2
+            exit 1
+          fi
+
+          ssh_dir="${RUNNER_TEMP}/deploy-drift/ssh"
+          mkdir -p "${ssh_dir}"
+          chmod 700 "${ssh_dir}"
+          key_file="${ssh_dir}/id_key"
+          known_hosts_file="${ssh_dir}/known_hosts"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > "${key_file}"
+          printf '%s\n' "${KNOWN_HOSTS}" > "${known_hosts_file}"
+          chmod 600 "${key_file}" "${known_hosts_file}"
+
+          remote_dir_quoted="$(printf '%q' "${REMOTE_TARGET_DIR}")"
+          ssh \
+            -i "${key_file}" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${known_hosts_file}" \
+            -p "${SSH_PORT}" \
+            "${REMOTE_USER}@${REMOTE_HOST}" \
+            "cd ${remote_dir_quoted} && find . -type f -print | sed 's#^\./##'" \
+            > "${RUNNER_TEMP}/deploy-drift/remote-files.txt"
+
+      - name: Generate sanitized drift report
+        shell: bash
+        env:
+          FIXTURE_MODE: ${{ inputs.fixture_mode }}
+          SOURCE_PATH: ${{ inputs.source_path }}
+          CALLER_EXCLUDES: ${{ steps.inputs.outputs.caller_excludes }}
+          EXTRA_EXCLUDES: ${{ steps.inputs.outputs.extra_excludes }}
+          FIXTURE_LOCAL_LIST: ${{ steps.inputs.outputs.local_list }}
+          FIXTURE_REMOTE_LIST: ${{ steps.inputs.outputs.remote_list }}
+        run: |
+          set -euo pipefail
+
+          args=(
+            --remote-list "${RUNNER_TEMP}/deploy-drift/remote-files.txt"
+            --output-dir "deploy-drift-artifacts"
+            --exclude-file "${EXTRA_EXCLUDES}"
+          )
+
+          if [[ -n "${CALLER_EXCLUDES}" ]]; then
+            args+=(--exclude-file "${CALLER_EXCLUDES}")
+          fi
+
+          if [[ "${FIXTURE_MODE}" == "true" ]]; then
+            args=(
+              --local-list "${FIXTURE_LOCAL_LIST}"
+              --remote-list "${FIXTURE_REMOTE_LIST}"
+              --output-dir "deploy-drift-artifacts"
+              --exclude-file "toolkit/fixtures/deploy-drift/excludes.txt"
+              --exclude-file "${EXTRA_EXCLUDES}"
+              --fixture-name "bundled"
+            )
+          else
+            args+=(--local-root "caller/${SOURCE_PATH}")
+          fi
+
+          python3 toolkit/scripts/deploy_drift_report.py "${args[@]}"
+
+      - name: Upload sanitized drift report artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-drift-report
+          path: |
+            deploy-drift-artifacts/deploy-drift-report.md
+            deploy-drift-artifacts/deploy-drift-summary.json
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: error

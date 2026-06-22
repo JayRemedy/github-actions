@@ -1,6 +1,7 @@
 # Shared GitHub Actions
 
-Reusable GitHub Actions workflows and helper scripts for sites managed by John.
+Reusable GitHub Actions workflows and helper scripts for multiple websites and
+applications.
 
 ## Purpose
 
@@ -10,12 +11,17 @@ Caller repositories keep their own secrets, target directories, and repo-specifi
 
 ## Planned workflows
 
-- PR checks
-- Telegram PR notifications
-- staging rsync deploy
-- production rsync deploy
 - deploy drift reports
 - checksum drift reports
+- PR checks
+- staging deploys
+- production deploys
+
+## Available workflows
+
+- [Deploy drift report](docs/deploy-drift-report.md): a reusable, report-only
+  workflow that compares caller repository files with a remote target and uploads
+  sanitized drift report artifacts.
 
 ## Safety model
 

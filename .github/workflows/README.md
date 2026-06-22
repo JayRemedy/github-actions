@@ -7,5 +7,5 @@ Caller repositories invoke them with:
 ```yaml
 jobs:
   example:
-    uses: JayRemedy/github-actions/.github/workflows/example.yml@main
+    uses: placeholder-owner/placeholder-actions/.github/workflows/example.yml@v1
 ```
