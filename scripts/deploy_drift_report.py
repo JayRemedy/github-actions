@@ -20,6 +20,7 @@ from typing import Iterable
 
 REPORT_NAME = "deploy-drift-report.md"
 SUMMARY_NAME = "deploy-drift-summary.json"
+MAX_LOCAL_ONLY_PATHS = 25
 
 WEB_ROOT_SEGMENTS = {"public", "public_html", "www", "html", "htdocs", "webroot"}
 ENTRYPOINT_NAMES = {"index.html", "index.htm", "index.php", "index.js"}
@@ -267,6 +268,8 @@ def build_summary(
     only_local = local_paths - remote_paths
     only_remote = remote_paths - local_paths
     matching = local_paths & remote_paths
+    sorted_only_local = sorted(only_local)
+    local_only_paths = sorted_only_local[:MAX_LOCAL_ONLY_PATHS]
 
     return {
         "schema_version": 1,
@@ -295,6 +298,12 @@ def build_summary(
             "extra_remote_by_category": bucket_counts(only_remote, category_for),
             "extra_remote_by_extension": extension_counts(only_remote),
         },
+        "local_only_paths": {
+            "paths": local_only_paths,
+            "shown": len(local_only_paths),
+            "total": len(only_local),
+            "truncated": len(only_local) > MAX_LOCAL_ONLY_PATHS,
+        },
         "possible_copied_site_tree": copied_tree_heuristic(local_paths, only_remote),
     }
 
@@ -303,6 +312,7 @@ def build_report(summary: dict[str, object]) -> str:
     counts = summary["counts"]
     safety = summary["safety"]
     buckets = summary["path_bucket_analysis"]
+    local_only = summary.get("local_only_paths", {})
     heuristic = summary["possible_copied_site_tree"]
     signals = heuristic["signals"]
     signal_counts = heuristic["signal_counts"]
@@ -310,8 +320,8 @@ def build_report(summary: dict[str, object]) -> str:
     lines = [
         "# Deploy Drift Report",
         "",
-        "This report is sanitized. It contains aggregate counts and bucket analysis only.",
-        "Raw local and remote file lists are not included.",
+        "This report is sanitized. It contains aggregate counts, bucket analysis, and bounded repo-side path samples only.",
+        "Raw remote file lists are not included; bounded local-only repo paths may be shown.",
         "",
         "## Run Context",
         "",
@@ -335,6 +345,22 @@ def build_report(summary: dict[str, object]) -> str:
         f"- excluded local files: `{counts['excluded_local_files']}`",
         f"- excluded remote files: `{counts['excluded_remote_files']}`",
         "",
+        "## Local-Only Repo Paths",
+        "",
+    ]
+
+    paths = local_only.get("paths", []) if isinstance(local_only, dict) else []
+    if paths:
+        lines.extend(f"- `{path}`" for path in paths)
+        if local_only.get("truncated"):
+            lines.append(
+                f"- _Showing {local_only.get('shown')} of {local_only.get('total')} local-only paths._"
+            )
+    else:
+        lines.append("_None._")
+
+    lines.extend([
+        "",
         "## Extra Remote Path Buckets",
         "",
         "### By Depth",
@@ -353,7 +379,7 @@ def build_report(summary: dict[str, object]) -> str:
         "",
         "### Signals",
         "",
-    ]
+    ])
 
     for key, value in signals.items():
         lines.append(f"- {key}: `{str(value).lower()}`")

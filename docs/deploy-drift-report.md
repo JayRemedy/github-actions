@@ -76,6 +76,7 @@ The artifacts include:
 
 - safety booleans: `deleted=false`, `uploaded=false`, `deployed=false`
 - local, remote, matching, local-only, and remote-only file counts
+- bounded local-only repo paths, up to 25 entries, so small deploy gaps can be identified without exposing remote paths
 - extra remote path bucket analysis by depth, generic category, and extension
 - a possible copied-site-tree heuristic based on aggregate signals
 
