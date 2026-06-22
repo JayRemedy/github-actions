@@ -56,6 +56,10 @@ secrets, hostnames, usernames, target directories, and exclude configuration.
 | --- | --- | --- |
 | `ssh_private_key` | Live mode | Read-only SSH private key supplied by the caller repository. |
 | `known_hosts` | Live mode | Known hosts content supplied by the caller repository. |
+| `remote_host` | Optional | Deployment host, for callers that keep connection values in secrets instead of variables. |
+| `remote_user` | Optional | SSH username, for callers that keep connection values in secrets instead of variables. |
+| `remote_target_dir` | Optional | Remote target directory, for callers that keep connection values in secrets instead of variables. |
+| `ssh_port` | Optional | SSH port, for callers that keep connection values in secrets instead of inputs. |
 
 ## Artifacts
 

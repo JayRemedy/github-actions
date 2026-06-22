@@ -55,6 +55,18 @@ on:
       known_hosts:
         description: Known hosts content supplied by the caller repository.
         required: false
+      remote_host:
+        description: Optional deployment host supplied as a secret by the caller repository.
+        required: false
+      remote_user:
+        description: Optional SSH username supplied as a secret by the caller repository.
+        required: false
+      remote_target_dir:
+        description: Optional remote target directory supplied as a secret by the caller repository.
+        required: false
+      ssh_port:
+        description: Optional SSH port supplied as a secret by the caller repository.
+        required: false
 
 permissions:
   contents: read
@@ -130,10 +142,10 @@ jobs:
         env:
           SSH_PRIVATE_KEY: ${{ secrets.ssh_private_key }}
           KNOWN_HOSTS: ${{ secrets.known_hosts }}
-          REMOTE_HOST: ${{ inputs.remote_host }}
-          REMOTE_USER: ${{ inputs.remote_user }}
-          REMOTE_TARGET_DIR: ${{ inputs.remote_target_dir }}
-          SSH_PORT: ${{ inputs.ssh_port }}
+          REMOTE_HOST: ${{ inputs.remote_host || secrets.remote_host }}
+          REMOTE_USER: ${{ inputs.remote_user || secrets.remote_user }}
+          REMOTE_TARGET_DIR: ${{ inputs.remote_target_dir || secrets.remote_target_dir }}
+          SSH_PORT: ${{ inputs.ssh_port || secrets.ssh_port || '22' }}
         run: |
           set -euo pipefail
 
