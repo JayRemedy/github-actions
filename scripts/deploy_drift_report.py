@@ -90,6 +90,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", required=True, help="Directory for sanitized artifacts.")
     parser.add_argument("--fixture-name", default="", help="Optional fixture label for the report.")
+    parser.add_argument("--report-label", default="", help="Optional caller-provided target or environment label.")
     return parser.parse_args()
 
 
@@ -261,6 +262,7 @@ def build_summary(
     remote_paths: set[str],
     excluded_count: dict[str, int],
     fixture_name: str,
+    report_label: str,
 ) -> dict[str, object]:
     only_local = local_paths - remote_paths
     only_remote = remote_paths - local_paths
@@ -271,6 +273,7 @@ def build_summary(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "mode": "fixture" if fixture_name else "report",
         "fixture_name": fixture_name,
+        "report_label": report_label,
         "safety": {
             "deleted": False,
             "uploaded": False,
@@ -309,6 +312,12 @@ def build_report(summary: dict[str, object]) -> str:
         "",
         "This report is sanitized. It contains aggregate counts and bucket analysis only.",
         "Raw local and remote file lists are not included.",
+        "",
+        "## Run Context",
+        "",
+        f"- target: `{summary.get('report_label') or summary.get('mode')}`",
+        f"- mode: `{summary.get('mode')}`",
+        f"- fixture name: `{summary.get('fixture_name') or 'n/a'}`",
         "",
         "## Safety",
         "",
@@ -384,7 +393,13 @@ def main() -> None:
         "remote": len(raw_remote) - len(remote_paths),
     }
 
-    summary = build_summary(local_paths, remote_paths, excluded_count, args.fixture_name)
+    summary = build_summary(
+        local_paths,
+        remote_paths,
+        excluded_count,
+        args.fixture_name,
+        args.report_label,
+    )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / SUMMARY_NAME).write_text(
