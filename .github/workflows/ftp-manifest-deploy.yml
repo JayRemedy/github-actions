@@ -1,0 +1,335 @@
+name: FTP manifest deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment_name:
+        description: Target environment label, usually staging or production.
+        required: true
+        type: string
+      deploy_mode:
+        description: Use deploy to upload files or dry-run to only build/summarize the manifest.
+        required: false
+        type: string
+        default: dry-run
+      deploy_scope:
+        description: changed or full.
+        required: false
+        type: string
+        default: changed
+      base_ref:
+        description: Base ref/SHA for changed-file deploys. Blank uses HEAD^.
+        required: false
+        type: string
+        default: ""
+      head_ref:
+        description: Head ref/SHA for changed-file deploys. Blank uses the workflow commit.
+        required: false
+        type: string
+        default: ""
+      confirm_deploy:
+        description: Type true for production deploy uploads. Ignored for dry-run mode and non-production environments.
+        required: false
+        type: string
+        default: "false"
+      require_staging_root:
+        description: Refuse staging uploads unless ftp_server_dir is exactly /.
+        required: false
+        type: boolean
+        default: false
+      manifest_script:
+        description: Caller repository script that builds deploy-manifest.txt and safety artifacts.
+        required: false
+        type: string
+        default: scripts/staging-deploy-safety.sh
+      artifact_name:
+        description: Manifest artifact name.
+        required: false
+        type: string
+        default: ftp-deploy-manifest
+    secrets:
+      ftp_server:
+        required: false
+      ftp_username:
+        required: false
+      ftp_password:
+        required: false
+      ftp_server_dir:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  safety-checks:
+    name: Safety checks
+    runs-on: ubuntu-latest
+    outputs:
+      deploy-count: ${{ steps.manifest.outputs.deploy_count }}
+      php-count: ${{ steps.manifest.outputs.php_count }}
+      deploy-scope: ${{ steps.manifest.outputs.deploy_scope }}
+      deploy-base-ref: ${{ steps.manifest.outputs.deploy_base_ref }}
+      deploy-head-ref: ${{ steps.manifest.outputs.deploy_head_ref }}
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build deploy manifest and refuse unsafe files
+        id: manifest
+        shell: bash
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment_name }}
+          DEPLOY_MODE: ${{ inputs.deploy_mode }}
+          INPUT_DEPLOY_SCOPE: ${{ inputs.deploy_scope }}
+          INPUT_BASE_REF: ${{ inputs.base_ref }}
+          INPUT_HEAD_REF: ${{ inputs.head_ref }}
+          MANIFEST_SCRIPT: ${{ inputs.manifest_script }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$DEPLOY_MODE" != "deploy" && "$DEPLOY_MODE" != "dry-run" ]]; then
+            echo "deploy_mode must be deploy or dry-run." >&2
+            exit 1
+          fi
+          if [[ "$INPUT_DEPLOY_SCOPE" != "changed" && "$INPUT_DEPLOY_SCOPE" != "full" ]]; then
+            echo "deploy_scope must be changed or full." >&2
+            exit 1
+          fi
+          if [[ ! -f "$MANIFEST_SCRIPT" ]]; then
+            echo "Manifest script not found: $MANIFEST_SCRIPT" >&2
+            exit 1
+          fi
+
+          deploy_scope="$INPUT_DEPLOY_SCOPE"
+          deploy_base_ref="$INPUT_BASE_REF"
+          deploy_head_ref="$INPUT_HEAD_REF"
+          if [[ -z "$deploy_head_ref" ]]; then
+            deploy_head_ref='${{ github.sha }}'
+          fi
+          if [[ "$deploy_scope" == "changed" && -z "$deploy_base_ref" ]]; then
+            deploy_base_ref='${{ github.sha }}^'
+          fi
+
+          if [[ "$deploy_scope" == "changed" ]]; then
+            DEPLOY_ENVIRONMENT="$TARGET_ENVIRONMENT" DEPLOY_SCOPE="changed" DEPLOY_BASE_REF="$deploy_base_ref" DEPLOY_HEAD_REF="$deploy_head_ref" bash "$MANIFEST_SCRIPT"
+          else
+            DEPLOY_ENVIRONMENT="$TARGET_ENVIRONMENT" DEPLOY_SCOPE="full" bash "$MANIFEST_SCRIPT"
+          fi
+
+          echo "deploy_count=$(wc -l < deploy-manifest.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          echo "php_count=$(wc -l < php-files.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          echo "deploy_scope=$deploy_scope" >> "$GITHUB_OUTPUT"
+          echo "deploy_base_ref=$deploy_base_ref" >> "$GITHUB_OUTPUT"
+          echo "deploy_head_ref=$deploy_head_ref" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## ${TARGET_ENVIRONMENT^} deploy safety summary"
+            echo
+            echo "Environment: $TARGET_ENVIRONMENT"
+            echo "Mode: $DEPLOY_MODE"
+            echo "Deploy scope: $deploy_scope"
+            if [[ "$deploy_scope" == "changed" ]]; then
+              echo "Diff base: $deploy_base_ref"
+              echo "Diff head: $deploy_head_ref"
+            fi
+            echo "Deployable files: $(wc -l < deploy-manifest.txt | tr -d ' ')"
+            echo "PHP files checked: $(wc -l < php-files.txt | tr -d ' ')"
+            echo
+            echo '### Deployable files summary'
+            echo "- Deployable files: $(wc -l < deploy-manifest.txt | tr -d ' ')"
+            echo "- PHP files: $(wc -l < php-files.txt | tr -d ' ')"
+            if [[ -s allowed-inspected-files.txt ]]; then
+              echo "- Manually inspected false positives allowed: $(wc -l < allowed-inspected-files.txt | tr -d ' ')"
+            else
+              echo '- Manually inspected false positives allowed: 0'
+            fi
+            echo
+            if [[ -s allowed-inspected-files.txt ]]; then
+              echo '### Manually inspected false positives allowed'
+              while IFS=$'\t' read -r allowed_path note; do
+                [[ -n "$allowed_path" ]] || continue
+                echo "- ${allowed_path} — ${note}"
+              done < allowed-inspected-files.txt
+              echo
+            fi
+            echo '### Files that would be deployed'
+            sed 's/^/- /' deploy-manifest.txt
+            echo
+            echo '### Repository-only files skipped'
+            if [[ -s skipped-files.txt ]]; then sed 's/^/- /' skipped-files.txt; else echo '- none'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: PHP syntax check
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -s php-files.txt ]]; then
+            echo 'No PHP files in deploy manifest.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if ! command -v php >/dev/null 2>&1; then
+            echo 'PHP is not available on this runner; syntax checks skipped.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          : > php-lint-output.txt
+          while IFS= read -r file; do
+            [[ -n "$file" ]] || continue
+            php -l "$file" >> php-lint-output.txt
+          done < php-files.txt
+
+          {
+            echo
+            echo '### PHP syntax check'
+            echo "Checked $(wc -l < php-files.txt | tr -d ' ') PHP files with php -l."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload deploy manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: |
+            deploy-manifest.txt
+            php-files.txt
+            skipped-files.txt
+            allowed-inspected-files.txt
+          if-no-files-found: error
+
+  dry-run-summary:
+    name: Dry-run summary
+    needs: safety-checks
+    if: ${{ inputs.deploy_mode == 'dry-run' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report dry run
+        shell: bash
+        run: |
+          {
+            echo '## FTP deploy dry run complete'
+            echo
+            echo 'Safety checks passed. No files were uploaded because deploy_mode=dry-run.'
+            echo "Environment: ${{ inputs.environment_name }}"
+            echo "Deployable files: ${{ needs.safety-checks.outputs.deploy-count }}"
+            echo "PHP files checked: ${{ needs.safety-checks.outputs.php-count }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy via FTP
+    needs: safety-checks
+    if: ${{ inputs.deploy_mode == 'deploy' && needs.safety-checks.outputs.deploy-count != '0' && (inputs.environment_name != 'production' || inputs.confirm_deploy == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download deploy manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: .
+
+      - name: Install lftp
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y lftp
+
+      - name: Deploy manifest to FTP directory
+        shell: bash
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment_name }}
+          REQUIRE_STAGING_ROOT: ${{ inputs.require_staging_root }}
+          FTP_SERVER: ${{ secrets.ftp_server }}
+          FTP_USERNAME: ${{ secrets.ftp_username }}
+          FTP_PASSWORD: ${{ secrets.ftp_password }}
+          FTP_SERVER_DIR: ${{ secrets.ftp_server_dir }}
+        run: |
+          set -euo pipefail
+
+          for name in FTP_SERVER FTP_USERNAME FTP_PASSWORD FTP_SERVER_DIR; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required FTP secret: $name" >&2
+              exit 1
+            fi
+          done
+
+          if [[ "$REQUIRE_STAGING_ROOT" == "true" && "$FTP_SERVER_DIR" != "/" ]]; then
+            echo 'Refusing deploy: staging FTP_SERVER_DIR must be / because this FTP account is jail-rooted.' >&2
+            exit 1
+          fi
+          if [[ "$TARGET_ENVIRONMENT" == "production" && "$FTP_SERVER_DIR" != /* ]]; then
+            echo 'Refusing production deploy: FTP_SERVER_DIR must be an absolute remote path such as / or /public_html/dash.' >&2
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import shlex
+
+          target = os.environ['TARGET_ENVIRONMENT']
+          server_dir = os.environ['FTP_SERVER_DIR']
+          require_root = os.environ.get('REQUIRE_STAGING_ROOT') == 'true'
+          files = [line.strip() for line in Path('deploy-manifest.txt').read_text().splitlines() if line.strip()]
+          script_name = f'{target}-upload.lftp'
+          with Path(script_name).open('w') as out:
+              out.write('set cmd:fail-exit yes\n')
+              out.write('set net:timeout 30\n')
+              out.write('set net:max-retries 2\n')
+              out.write('set net:reconnect-interval-base 5\n')
+              out.write('set ftp:passive-mode true\n')
+              out.write('set ftp:ssl-allow yes\n')
+              out.write('set ftp:ssl-force false\n')
+              out.write('set ftp:ssl-protect-data true\n')
+              out.write('set ssl:verify-certificate no\n')
+              out.write(f'cd {shlex.quote(server_dir)}\n')
+              made = set()
+              for file in files:
+                  parent = str(Path(file).parent)
+                  if parent == '.':
+                      remote_dir = '/' if require_root else '.'
+                  else:
+                      parts = parent.split('/')
+                      current = ''
+                      for part in parts:
+                          if require_root:
+                              current = f'{current}/{part}'
+                          else:
+                              current = part if not current else f'{current}/{part}'
+                          if current not in made:
+                              out.write(f'mkdir -fp {shlex.quote(current)}\n')
+                              made.add(current)
+                      remote_dir = ('/' + parent) if require_root else parent
+                  out.write(f'put -O {shlex.quote(remote_dir)} {shlex.quote(file)}\n')
+              out.write('bye\n')
+          print(f'Prepared lftp upload script for {len(files)} files: {script_name}')
+          PY
+
+          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" -e "source ${TARGET_ENVIRONMENT}-upload.lftp" "$FTP_SERVER"
+
+          {
+            echo "## ${TARGET_ENVIRONMENT^} deploy complete"
+            echo
+            echo "Deployed $(wc -l < deploy-manifest.txt | tr -d ' ') files to the $TARGET_ENVIRONMENT environment."
+            echo
+            echo '### Deployed files'
+            sed 's/^/- /' deploy-manifest.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  missing-production-confirmation:
+    name: Missing production confirmation
+    needs: safety-checks
+    if: ${{ inputs.deploy_mode == 'deploy' && inputs.environment_name == 'production' && inputs.confirm_deploy != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse unconfirmed production deploy
+        shell: bash
+        run: |
+          echo 'Production deploy refused: set confirm_deploy=true to upload to production.' >&2
+          {
+            echo '## Production deploy refused'
+            echo
+            echo 'Safety checks passed, but no files were uploaded because confirm_deploy was not true.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
