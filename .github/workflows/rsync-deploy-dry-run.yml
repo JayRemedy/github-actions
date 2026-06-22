@@ -159,6 +159,9 @@ jobs:
 
           args=(
             -azn
+            --checksum
+            --no-times
+            --omit-dir-times
             --itemize-changes
             --out-format=%i\ %n%L
             --exclude-from "${EXTRA_EXCLUDES}"
