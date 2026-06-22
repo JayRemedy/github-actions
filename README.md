@@ -24,6 +24,8 @@ Caller repositories keep their own secrets, target directories, and repo-specifi
 - [Rsync deploy dry-run](docs/rsync-deploy-dry-run.md): a reusable, dry-run-only
   workflow that previews rsync upload/update changes and uploads sanitized
   summary artifacts.
+- [Rsync deploy](docs/rsync-deploy.md): a reusable real deploy workflow that
+  uploads via rsync without `--delete` and writes a bounded deploy report.
 
 ## Safety model
 
