@@ -11,7 +11,6 @@ Caller repositories keep their own secrets, target directories, and repo-specifi
 
 ## Planned workflows
 
-- deploy drift reports
 - checksum drift reports
 - PR checks
 - staging deploys
@@ -22,6 +21,9 @@ Caller repositories keep their own secrets, target directories, and repo-specifi
 - [Deploy drift report](docs/deploy-drift-report.md): a reusable, report-only
   workflow that compares caller repository files with a remote target and uploads
   sanitized drift report artifacts.
+- [Rsync deploy dry-run](docs/rsync-deploy-dry-run.md): a reusable, dry-run-only
+  workflow that previews rsync upload/update changes and uploads sanitized
+  summary artifacts.
 
 ## Safety model
 

@@ -1,0 +1,205 @@
+name: Reusable rsync deploy dry-run
+
+on:
+  workflow_call:
+    inputs:
+      source_path:
+        description: Repo-relative source path to dry-run deploy.
+        required: false
+        type: string
+        default: "."
+      remote_target_dir:
+        description: Optional remote target directory supplied by the caller.
+        required: false
+        type: string
+        default: ""
+      ssh_port:
+        description: SSH port.
+        required: false
+        type: string
+        default: "22"
+      exclude_file:
+        description: Optional caller repository file containing rsync exclude patterns.
+        required: false
+        type: string
+        default: ""
+      exclude_patterns:
+        description: Optional newline-separated exclude patterns supplied by the caller.
+        required: false
+        type: string
+        default: ""
+      report_label:
+        description: Optional caller-provided target/environment label for the report summary.
+        required: false
+        type: string
+        default: ""
+      toolkit_repository:
+        description: Shared toolkit repository containing scripts.
+        required: false
+        type: string
+        default: "JayRemedy/github-actions"
+      toolkit_ref:
+        description: Shared toolkit repository ref to check out.
+        required: false
+        type: string
+        default: "main"
+      artifact_retention_days:
+        description: Number of days to retain sanitized report artifacts.
+        required: false
+        type: number
+        default: 14
+    secrets:
+      ssh_private_key:
+        description: SSH private key with write-capable deploy access for dry-run connection/auth validation.
+        required: true
+      known_hosts:
+        description: Known hosts content for strict host verification.
+        required: true
+      remote_host:
+        description: Remote host.
+        required: true
+      remote_user:
+        description: Remote user.
+        required: true
+      remote_target_dir:
+        description: Optional remote target directory supplied as a secret by the caller repository.
+        required: false
+      ssh_port:
+        description: Optional SSH port supplied as a secret by the caller repository.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    name: Rsync deploy dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@v6
+        with:
+          path: caller
+
+      - name: Check out shared workflow toolkit
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.toolkit_repository }}
+          ref: ${{ inputs.toolkit_ref }}
+          path: toolkit
+
+      - name: Prepare dry-run inputs
+        id: inputs
+        shell: bash
+        env:
+          EXCLUDE_FILE: ${{ inputs.exclude_file }}
+          EXCLUDE_PATTERNS: ${{ inputs.exclude_patterns }}
+          INPUT_REMOTE_TARGET_DIR: ${{ inputs.remote_target_dir }}
+          SECRET_REMOTE_TARGET_DIR: ${{ secrets.remote_target_dir }}
+          INPUT_SSH_PORT: ${{ inputs.ssh_port }}
+          SECRET_SSH_PORT: ${{ secrets.ssh_port }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/rsync-dry-run" "rsync-dry-run-artifacts"
+
+          extra_excludes="${RUNNER_TEMP}/rsync-dry-run/extra-excludes.txt"
+          printf '%s\n' "${EXCLUDE_PATTERNS}" > "${extra_excludes}"
+          echo "extra_excludes=${extra_excludes}" >> "${GITHUB_OUTPUT}"
+
+          if [[ -n "${EXCLUDE_FILE}" ]]; then
+            caller_excludes="caller/${EXCLUDE_FILE}"
+            if [[ ! -f "${caller_excludes}" ]]; then
+              echo "Configured exclude_file was not found in the caller repository." >&2
+              exit 1
+            fi
+            echo "caller_excludes=${caller_excludes}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "caller_excludes=" >> "${GITHUB_OUTPUT}"
+          fi
+
+          remote_target_dir="${INPUT_REMOTE_TARGET_DIR:-${SECRET_REMOTE_TARGET_DIR:-}}"
+          if [[ -z "${remote_target_dir}" ]]; then
+            echo "remote_target_dir is required via input or secret." >&2
+            exit 1
+          fi
+          echo "remote_target_dir=${remote_target_dir}" >> "${GITHUB_OUTPUT}"
+
+          ssh_port="${SECRET_SSH_PORT:-${INPUT_SSH_PORT:-22}}"
+          echo "ssh_port=${ssh_port}" >> "${GITHUB_OUTPUT}"
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.ssh_private_key }}
+          KNOWN_HOSTS: ${{ secrets.known_hosts }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Run rsync dry-run
+        shell: bash
+        env:
+          SOURCE_PATH: ${{ inputs.source_path }}
+          REMOTE_HOST: ${{ secrets.remote_host }}
+          REMOTE_USER: ${{ secrets.remote_user }}
+          REMOTE_TARGET_DIR: ${{ steps.inputs.outputs.remote_target_dir }}
+          SSH_PORT: ${{ steps.inputs.outputs.ssh_port }}
+          CALLER_EXCLUDES: ${{ steps.inputs.outputs.caller_excludes }}
+          EXTRA_EXCLUDES: ${{ steps.inputs.outputs.extra_excludes }}
+        run: |
+          set -euo pipefail
+          if [[ ! -d "caller/${SOURCE_PATH}" ]]; then
+            echo "Configured source_path is not a directory." >&2
+            exit 1
+          fi
+
+          args=(
+            -azn
+            --itemize-changes
+            --out-format=%i\ %n%L
+            --exclude-from "${EXTRA_EXCLUDES}"
+            -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          )
+
+          if [[ -n "${CALLER_EXCLUDES}" ]]; then
+            args+=(--exclude-from "${CALLER_EXCLUDES}")
+          fi
+
+          rsync "${args[@]}" "caller/${SOURCE_PATH}/" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_TARGET_DIR%/}/" \
+            > "${RUNNER_TEMP}/rsync-dry-run/itemize.log"
+
+      - name: Generate sanitized dry-run report
+        shell: bash
+        env:
+          REPORT_LABEL: ${{ inputs.report_label }}
+        run: |
+          set -euo pipefail
+          python3 toolkit/scripts/rsync_dry_run_summary.py \
+            --itemize-log "${RUNNER_TEMP}/rsync-dry-run/itemize.log" \
+            --output-dir rsync-dry-run-artifacts \
+            --report-label "${REPORT_LABEL}" \
+            --max-paths 50
+
+      - name: Write rsync dry-run step summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            cat rsync-dry-run-artifacts/rsync-dry-run-report.md
+            echo ""
+            echo "Artifacts uploaded: \`rsync-dry-run-report.md\` and \`rsync-dry-run-summary.json\`."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload sanitized dry-run artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: rsync-dry-run-report
+          path: |
+            rsync-dry-run-artifacts/rsync-dry-run-report.md
+            rsync-dry-run-artifacts/rsync-dry-run-summary.json
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: error
