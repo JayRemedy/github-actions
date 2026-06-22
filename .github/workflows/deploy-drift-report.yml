@@ -43,6 +43,16 @@ on:
         required: false
         type: string
         default: ""
+      toolkit_repository:
+        description: Shared toolkit repository containing the reusable workflow scripts.
+        required: false
+        type: string
+        default: "JayRemedy/github-actions"
+      toolkit_ref:
+        description: Shared toolkit repository ref to check out for scripts and fixtures.
+        required: false
+        type: string
+        default: "main"
       artifact_retention_days:
         description: Number of days to retain sanitized report artifacts.
         required: false
@@ -81,28 +91,11 @@ jobs:
         with:
           path: caller
 
-      - name: Resolve toolkit ref
-        id: toolkit
-        shell: bash
-        run: |
-          set -euo pipefail
-          workflow_ref="${GITHUB_WORKFLOW_REF}"
-          repository="${workflow_ref%%/.github/workflows/*}"
-          ref="${workflow_ref##*@}"
-          if [[ -z "${repository}" || -z "${ref}" || "${repository}" == "${workflow_ref}" ]]; then
-            echo "Could not resolve reusable workflow repository and ref." >&2
-            exit 1
-          fi
-          {
-            echo "repository=${repository}"
-            echo "ref=${ref}"
-          } >> "${GITHUB_OUTPUT}"
-
       - name: Check out shared workflow toolkit
         uses: actions/checkout@v4
         with:
-          repository: ${{ steps.toolkit.outputs.repository }}
-          ref: ${{ steps.toolkit.outputs.ref }}
+          repository: ${{ inputs.toolkit_repository }}
+          ref: ${{ inputs.toolkit_ref }}
           path: toolkit
 
       - name: Prepare drift inputs
