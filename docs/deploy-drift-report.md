@@ -48,6 +48,8 @@ secrets, hostnames, usernames, target directories, and exclude configuration.
 | `ssh_port` | No | `22` | SSH port from the caller repository. |
 | `exclude_file` | No | empty | Caller repository file containing exclude patterns. |
 | `exclude_patterns` | No | empty | Newline-separated exclude patterns supplied by the caller. |
+| `toolkit_repository` | No | `JayRemedy/github-actions` | Shared toolkit repository containing scripts and fixtures. |
+| `toolkit_ref` | No | `main` | Shared toolkit repository ref to check out. Pin this when callers need stability. |
 | `artifact_retention_days` | No | `14` | Retention period for sanitized report artifacts. |
 
 ## Secrets
