@@ -1,0 +1,6 @@
+index.html
+assets/app.css
+assets/app.js
+images/logo.svg
+config/settings.sample.json
+docs/readme.md
