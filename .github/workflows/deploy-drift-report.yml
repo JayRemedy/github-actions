@@ -205,6 +205,16 @@ jobs:
 
           python3 toolkit/scripts/deploy_drift_report.py "${args[@]}"
 
+      - name: Write deploy drift step summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            cat deploy-drift-artifacts/deploy-drift-report.md
+            echo ""
+            echo "Artifacts uploaded: \`deploy-drift-report.md\` and \`deploy-drift-summary.json\`."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Upload sanitized drift report artifacts
         uses: actions/upload-artifact@v4
         with:
