@@ -43,6 +43,11 @@ on:
         required: false
         type: string
         default: ""
+      report_label:
+        description: Optional caller-provided target or environment label for the report summary.
+        required: false
+        type: string
+        default: ""
       toolkit_repository:
         description: Shared toolkit repository containing the reusable workflow scripts.
         required: false
@@ -87,12 +92,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out caller repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: caller
 
       - name: Check out shared workflow toolkit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ inputs.toolkit_repository }}
           ref: ${{ inputs.toolkit_ref }}
@@ -177,12 +182,14 @@ jobs:
           EXTRA_EXCLUDES: ${{ steps.inputs.outputs.extra_excludes }}
           FIXTURE_LOCAL_LIST: ${{ steps.inputs.outputs.local_list }}
           FIXTURE_REMOTE_LIST: ${{ steps.inputs.outputs.remote_list }}
+          REPORT_LABEL: ${{ inputs.report_label }}
         run: |
           set -euo pipefail
 
           args=(
             --remote-list "${RUNNER_TEMP}/deploy-drift/remote-files.txt"
             --output-dir "deploy-drift-artifacts"
+            --report-label "${REPORT_LABEL}"
             --exclude-file "${EXTRA_EXCLUDES}"
           )
 
@@ -195,6 +202,7 @@ jobs:
               --local-list "${FIXTURE_LOCAL_LIST}"
               --remote-list "${FIXTURE_REMOTE_LIST}"
               --output-dir "deploy-drift-artifacts"
+              --report-label "${REPORT_LABEL}"
               --exclude-file "toolkit/fixtures/deploy-drift/excludes.txt"
               --exclude-file "${EXTRA_EXCLUDES}"
               --fixture-name "bundled"
@@ -216,7 +224,7 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload sanitized drift report artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: deploy-drift-report
           path: |

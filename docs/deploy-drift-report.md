@@ -27,6 +27,7 @@ jobs:
       remote_host: ${{ vars.DEPLOY_HOST }}
       remote_user: ${{ vars.DEPLOY_USER }}
       remote_target_dir: ${{ vars.DEPLOY_TARGET_DIR }}
+      report_label: staging
       exclude_file: .github/deploy-drift-excludes.txt
     secrets:
       ssh_private_key: ${{ secrets.DEPLOY_READONLY_SSH_KEY }}
@@ -48,6 +49,7 @@ secrets, hostnames, usernames, target directories, and exclude configuration.
 | `ssh_port` | No | `22` | SSH port from the caller repository. |
 | `exclude_file` | No | empty | Caller repository file containing exclude patterns. |
 | `exclude_patterns` | No | empty | Newline-separated exclude patterns supplied by the caller. |
+| `report_label` | No | empty | Caller-provided target/environment label shown in the summary and JSON. |
 | `toolkit_repository` | No | `JayRemedy/github-actions` | Shared toolkit repository containing scripts and fixtures. |
 | `toolkit_ref` | No | `main` | Shared toolkit repository ref to check out. Pin this when callers need stability. |
 | `artifact_retention_days` | No | `14` | Retention period for sanitized report artifacts. |
