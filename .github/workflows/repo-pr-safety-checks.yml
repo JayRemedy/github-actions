@@ -1,0 +1,80 @@
+name: Repository PR safety checks
+
+on:
+  workflow_call:
+    inputs:
+      base_ref:
+        description: Base ref fetched before running checks.
+        required: false
+        type: string
+        default: main
+      pr_safety_command:
+        description: Command that runs caller repository PR safety checks.
+        required: false
+        type: string
+        default: bash scripts/pr-safety-checks.sh origin/main
+      deploy_safety_command:
+        description: Command that runs caller repository deploy manifest safety checks. Blank skips it.
+        required: false
+        type: string
+        default: DEPLOY_ENVIRONMENT=staging bash scripts/staging-deploy-safety.sh
+      artifact_name:
+        description: Safety artifact name.
+        required: false
+        type: string
+        default: pr-safety-artifacts
+      artifact_paths:
+        description: Newline-separated artifact paths to upload if present.
+        required: false
+        type: string
+        default: |
+          pr-changed-files.txt
+          pr-php-files.txt
+          pr-secret-scan-hits.txt
+          pr-forbidden-paths.txt
+          deploy-manifest.txt
+          php-files.txt
+          blocked-files.txt
+          skipped-files.txt
+          secret-scan-hits.txt
+          allowed-inspected-files.txt
+
+permissions:
+  contents: read
+
+jobs:
+  safety:
+    name: Safety checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run PR safety checks
+        shell: bash
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+          PR_SAFETY_COMMAND: ${{ inputs.pr_safety_command }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune origin "$BASE_REF"
+          bash -lc "$PR_SAFETY_COMMAND"
+
+      - name: Run deploy manifest safety guard
+        if: ${{ inputs.deploy_safety_command != '' }}
+        shell: bash
+        env:
+          DEPLOY_SAFETY_COMMAND: ${{ inputs.deploy_safety_command }}
+        run: |
+          set -euo pipefail
+          bash -lc "$DEPLOY_SAFETY_COMMAND"
+
+      - name: Upload safety artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.artifact_paths }}
+          if-no-files-found: ignore

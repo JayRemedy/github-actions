@@ -1,0 +1,155 @@
+name: FTP deploy drift report
+
+on:
+  workflow_call:
+    inputs:
+      environment_name:
+        description: fixture, staging, or production.
+        required: true
+        type: string
+      remote_dir_override:
+        description: Optional remote directory override for staging/production listing mode.
+        required: false
+        type: string
+        default: ""
+      drift_script:
+        description: Caller repository drift report script.
+        required: false
+        type: string
+        default: scripts/deploy-drift-report.sh
+      artifact_name:
+        description: Artifact name prefix.
+        required: false
+        type: string
+        default: deploy-drift-report
+    secrets:
+      ftp_server:
+        required: false
+      ftp_username:
+        required: false
+      ftp_password:
+        required: false
+      ftp_server_dir:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: FTP deploy drift report
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@v4
+
+      - name: Generate fixture remote list
+        if: ${{ inputs.environment_name == 'fixture' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture_dir=$(mktemp -d)
+          {
+            echo './index.php'
+            echo 'remote-only-example.php'
+            echo 'uploads/customer-receipt.pdf'
+            echo 'cache/runtime-output.tmp'
+            echo '.env'
+          } > "$fixture_dir/remote-files.txt"
+          echo "fixture_dir=$fixture_dir" >> "$GITHUB_ENV"
+
+      - name: Install lftp
+        if: ${{ inputs.environment_name != 'fixture' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y lftp
+
+      - name: Run fixture drift report
+        if: ${{ inputs.environment_name == 'fixture' }}
+        shell: bash
+        env:
+          DRIFT_SCRIPT: ${{ inputs.drift_script }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$DRIFT_SCRIPT" ]]; then
+            echo "Drift script not found: $DRIFT_SCRIPT" >&2
+            exit 1
+          fi
+          bash "$DRIFT_SCRIPT" --remote-list "$fixture_dir/remote-files.txt"
+
+      - name: Run remote drift report
+        if: ${{ inputs.environment_name != 'fixture' }}
+        shell: bash
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment_name }}
+          REMOTE_DIR_OVERRIDE: ${{ inputs.remote_dir_override }}
+          FTP_SERVER: ${{ secrets.ftp_server }}
+          FTP_USERNAME: ${{ secrets.ftp_username }}
+          FTP_PASSWORD: ${{ secrets.ftp_password }}
+          FTP_SERVER_DIR: ${{ secrets.ftp_server_dir }}
+          DRIFT_SCRIPT: ${{ inputs.drift_script }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f "$DRIFT_SCRIPT" ]]; then
+            echo "Drift script not found: $DRIFT_SCRIPT" >&2
+            exit 1
+          fi
+          for name in FTP_SERVER FTP_USERNAME FTP_PASSWORD FTP_SERVER_DIR; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required FTP configuration for $TARGET_ENVIRONMENT: $name" >&2
+              exit 1
+            fi
+          done
+
+          remote_dir="$FTP_SERVER_DIR"
+          if [[ -n "$REMOTE_DIR_OVERRIDE" ]]; then
+            remote_dir="$REMOTE_DIR_OVERRIDE"
+          fi
+
+          FTP_HOST="$FTP_SERVER" \
+          FTP_USER="$FTP_USERNAME" \
+          bash "$DRIFT_SCRIPT" --use-lftp --remote-dir "$remote_dir"
+
+      - name: Write sanitized step summary
+        shell: bash
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment_name }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          import os
+          from pathlib import Path
+
+          summary = json.loads(Path('deploy-drift-summary.json').read_text())
+          print('## Deploy drift report')
+          print()
+          print(f"Environment: {os.environ['TARGET_ENVIRONMENT']}")
+          print('Mode: dry-run/report-only')
+          print('Deleted: false')
+          print('Uploaded: false')
+          print('Deployed: false')
+          print()
+          print('### Summary counts')
+          for key in (
+              'repo_deployable_count',
+              'remote_listed_count',
+              'matched_count',
+              'repo_only_count',
+              'remote_only_count',
+              'blocked_sensitive_or_runtime_count',
+          ):
+              print(f'- {key}: {summary[key]}')
+          PY
+
+      - name: Upload drift report artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}-${{ inputs.environment_name }}
+          path: |
+            deploy-drift-report.txt
+            deploy-drift-summary.json
+          if-no-files-found: error
