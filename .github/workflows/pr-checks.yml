@@ -1,0 +1,109 @@
+name: Reusable PR checks
+
+on:
+  workflow_call:
+    inputs:
+      base_ref:
+        description: Default base ref used when the event is not a pull_request.
+        required: false
+        type: string
+        default: main
+      forbidden_patterns:
+        description: Newline-separated shell case patterns to block in added or modified files.
+        required: false
+        type: string
+        default: |
+          dash/*
+          uploads/*
+          backups/*
+          logs/*
+          cache/*
+          .env
+          .env.*
+          *.sql
+          *.zip
+          *secret*
+          *credential*
+          *password*
+          *token*
+
+permissions:
+  contents: read
+
+jobs:
+  php-syntax:
+    name: PHP syntax check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@v6
+
+      - name: Run php -l on PHP files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          found=0
+          while IFS= read -r -d '' file; do
+            found=1
+            php -l "$file"
+          done < <(find . -type f -name '*.php' -print0)
+
+          if [ "$found" -eq 0 ]; then
+            echo "No PHP files found."
+          fi
+
+  forbidden-paths:
+    name: Forbidden path check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check added or modified files
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          BASE_REF: ${{ inputs.base_ref }}
+          FORBIDDEN_PATTERNS: ${{ inputs.forbidden_patterns }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$BASE_SHA" ]; then
+            range="$BASE_SHA...HEAD"
+          else
+            git fetch origin "$BASE_REF"
+            range="origin/${BASE_REF}...HEAD"
+          fi
+
+          mapfile -t changed_files < <(git diff --name-only --diff-filter=AM "$range")
+          if [ "${#changed_files[@]}" -eq 0 ]; then
+            echo "No added or modified files to check."
+            exit 0
+          fi
+
+          mapfile -t patterns <<< "$FORBIDDEN_PATTERNS"
+          blocked=()
+          for file in "${changed_files[@]}"; do
+            for pattern in "${patterns[@]}"; do
+              [ -n "$pattern" ] || continue
+              case "$file" in
+                $pattern)
+                  blocked+=("$file")
+                  break
+                  ;;
+              esac
+            done
+          done
+
+          if [ "${#blocked[@]}" -gt 0 ]; then
+            printf 'Forbidden files detected:\n'
+            printf ' - %s\n' "${blocked[@]}"
+            exit 1
+          fi
+
+          echo "No forbidden added or modified files detected."
