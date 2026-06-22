@@ -140,6 +140,47 @@ jobs:
           printf '%s\n' "${KNOWN_HOSTS}" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
+      - name: Preflight remote target
+        shell: bash
+        env:
+          REMOTE_HOST: ${{ secrets.remote_host }}
+          REMOTE_USER: ${{ secrets.remote_user }}
+          REMOTE_TARGET_DIR: ${{ steps.inputs.outputs.remote_target_dir }}
+          SSH_PORT: ${{ steps.inputs.outputs.ssh_port }}
+        run: |
+          set -euo pipefail
+          remote_target_dir="$(printf '%q' "${REMOTE_TARGET_DIR%/}")"
+          ssh_cmd=(
+            ssh
+            -i ~/.ssh/deploy_key
+            -p "${SSH_PORT}"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+          )
+
+          "${ssh_cmd[@]}" "${REMOTE_USER}@${REMOTE_HOST}" "target_dir=${remote_target_dir} bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          if [ -z "$target_dir" ] || [ "$target_dir" = "/" ]; then
+            echo "Invalid rsync target directory." >&2
+            exit 1
+          fi
+
+          if [ ! -d "$target_dir" ]; then
+            echo "Rsync target directory does not exist." >&2
+            exit 1
+          fi
+
+          cd "$target_dir"
+          top_level_count="$(find . -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
+          if [ "$top_level_count" -eq 0 ]; then
+            echo "Rsync target directory is empty; refusing first dry-run against an empty target." >&2
+            exit 1
+          fi
+
+          printf 'Remote target preflight passed: directory exists and contains %s top-level item(s).\n' "$top_level_count"
+          REMOTE
+
       - name: Run rsync dry-run
         shell: bash
         env:
