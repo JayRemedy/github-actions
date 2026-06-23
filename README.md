@@ -21,6 +21,8 @@ Caller repositories keep their own secrets, target directories, and repo-specifi
 - [Deploy drift report](docs/deploy-drift-report.md): a reusable, report-only
   workflow that compares caller repository files with a remote target and uploads
   sanitized drift report artifacts.
+- [Remote log report](docs/remote-log-report.md): a reusable, read-only SSH
+  workflow that collects bounded, redacted excerpts from recent remote logs.
 - [Rsync deploy dry-run](docs/rsync-deploy-dry-run.md): a reusable, dry-run-only
   workflow that previews rsync upload/update changes and uploads sanitized
   summary artifacts.
