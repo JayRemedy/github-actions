@@ -171,6 +171,7 @@ jobs:
             -p "${SSH_PORT}"
             -o IdentitiesOnly=yes
             -o StrictHostKeyChecking=yes
+            -o ConnectTimeout=15
           )
 
           "${ssh_cmd[@]}" "${REMOTE_USER}@${REMOTE_HOST}" "target_dir=${remote_target_dir} bash -s" <<'REMOTE'
@@ -221,7 +222,7 @@ jobs:
             --itemize-changes
             --out-format=%i\ %n%L
             --exclude-from "${EXTRA_EXCLUDES}"
-            -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+            -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15"
           )
 
           if [[ -n "${CALLER_EXCLUDES}" ]]; then
