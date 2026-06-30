@@ -57,6 +57,9 @@ on:
       ssh_port:
         description: Optional SSH port supplied as a secret by the caller repository.
         required: false
+      ssh_passphrase:
+        description: Optional passphrase for an encrypted SSH private key.
+        required: false
 
 permissions:
   contents: read
@@ -114,6 +117,7 @@ jobs:
         shell: bash
         env:
           SSH_PRIVATE_KEY: ${{ secrets.ssh_private_key }}
+          SSH_PASSPHRASE: ${{ secrets.ssh_passphrase }}
           KNOWN_HOSTS: ${{ secrets.known_hosts }}
         run: |
           set -euo pipefail
@@ -122,6 +126,17 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "${KNOWN_HOSTS}" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
+
+          if [[ -n "${SSH_PASSPHRASE}" ]]; then
+            eval "$(ssh-agent -s)"
+            askpass="${RUNNER_TEMP}/ssh-askpass.sh"
+            cat > "${askpass}" <<'ASKPASS'
+          #!/usr/bin/env bash
+          printf '%s\n' "${SSH_PASSPHRASE}"
+          ASKPASS
+            chmod 700 "${askpass}"
+            DISPLAY=:0 SSH_ASKPASS="${askpass}" SSH_ASKPASS_REQUIRE=force ssh-add ~/.ssh/deploy_key </dev/null
+          fi
 
       - name: Preflight remote target
         shell: bash
